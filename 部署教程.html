@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RSS Digest 部署到 GitHub Actions 完整教程</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.8; color: #1a1a2e; background: #f5f5fa; max-width: 900px;
+    margin: 0 auto; padding: 20px 30px 60px;
+  }
+  h1 { font-size: 28px; margin: 30px 0 10px; color: #16213e; border-bottom: 3px solid #0f3460; padding-bottom: 10px; }
+  h2 { font-size: 22px; margin: 35px 0 12px; color: #0f3460; border-left: 5px solid #e94560; padding-left: 12px; }
+  h3 { font-size: 18px; margin: 25px 0 10px; color: #16213e; }
+  p { margin: 8px 0; }
+  code { background: #e8e8f0; padding: 2px 6px; border-radius: 4px; font-family: "Fira Code", Consolas, monospace; font-size: 14px; color: #c73659; }
+  pre { background: #16213e; color: #e0e0e0; padding: 16px 20px; border-radius: 8px; overflow-x: auto; margin: 12px 0; font-size: 13.5px; line-height: 1.6; }
+  pre code { background: none; color: inherit; padding: 0; }
+  .note { background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px 16px; margin: 12px 0; border-radius: 4px; }
+  .note::before { content: "⚠️ 注意"; font-weight: bold; display: block; margin-bottom: 4px; color: #856404; }
+  .tip { background: #d4edda; border-left: 4px solid #28a745; padding: 12px 16px; margin: 12px 0; border-radius: 4px; }
+  .tip::before { content: "💡 提示"; font-weight: bold; display: block; margin-bottom: 4px; color: #155724; }
+  .danger { background: #f8d7da; border-left: 4px solid #dc3545; padding: 12px 16px; margin: 12px 0; border-radius: 4px; }
+  .danger::before { content: "🚨 重要"; font-weight: bold; display: block; margin-bottom: 4px; color: #721c24; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th { background: #0f3460; color: white; padding: 10px 12px; text-align: left; }
+  td { border: 1px solid #ddd; padding: 8px 12px; }
+  tr:nth-child(even) { background: #f0f0f5; }
+  .step { display: flex; align-items: flex-start; margin: 10px 0; }
+  .step-num { background: #e94560; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; flex-shrink: 0; margin-right: 12px; margin-top: 2px; }
+  .step-content { flex: 1; }
+  .file-tree { background: #1a1a2e; color: #7ec8e3; padding: 16px 20px; border-radius: 8px; font-family: "Fira Code", Consolas, monospace; font-size: 13px; line-height: 1.7; margin: 12px 0; }
+  .file-tree .keep { color: #28a745; }
+  .file-tree .ignore { color: #6c757d; text-decoration: line-through; }
+  .file-tree .comment { color: #ffc107; }
+  ol.steps { list-style: none; counter-reset: step-counter; }
+  ol.steps > li { counter-increment: step-counter; margin: 12px 0; padding-left: 40px; position: relative; }
+  ol.steps > li::before { content: counter(step-counter); position: absolute; left: 0; top: 2px; background: #e94560; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: bold; }
+  .badge-must { background: #dc3545; color: white; }
+  .badge-rec { background: #ffc107; color: #16213e; }
+  .toc { background: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px 25px; margin: 20px 0; }
+  .toc h3 { margin-top: 0; color: #0f3460; }
+  .toc ol { padding-left: 20px; }
+  .toc a { color: #0f3460; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; color: #e94560; }
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0; }
+  .flow-box { background: #0f3460; color: white; padding: 10px 18px; border-radius: 8px; font-size: 14px; font-weight: bold; }
+  .flow-arrow { font-size: 20px; color: #e94560; }
+</style>
+</head>
+<body>
+
+<h1>🚀 RSS Digest 部署到 GitHub Actions 完整教程</h1>
+
+<p>本教程将指导你把 RSS 信息摘要推送系统从本地迁移到 GitHub Actions，实现<b>全自动、免开机、免 VPN</b>的每日推送。</p>
+
+<div class="flow">
+  <div class="flow-box">📡 抓取 15 个 RSS 源</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box">🤖 DeepSeek AI 筛选</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box">📝 生成深度摘要</div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-box">📱 推送到手机 ntfy</div>
+</div>
+
+<p>每天北京时间 <b>9:00</b> 自动运行，你只需在手机上打开 ntfy 即可阅读精选摘要。</p>
+
+<div class="toc">
+  <h3>📋 目录</h3>
+  <ol>
+    <li><a href="#prereq">前置准备（3 样东西）</a></li>
+    <li><a href="#deepseek">获取 DeepSeek API Key</a></li>
+    <li><a href="#ntfy">手机安装 ntfy 应用</a></li>
+    <li><a href="#repo">创建 GitHub 仓库并上传文件</a></li>
+    <li><a href="#secrets">配置 GitHub Secrets</a></li>
+    <li><a href="#test">手动触发测试</a></li>
+    <li><a href="#verify">验证推送结果</a></li>
+    <li><a href="#troubleshoot">常见问题排查</a></li>
+    <li><a href="#cost">费用说明</a></li>
+  </ol>
+</div>
+
+<!-- ========== 1. 前置准备 ========== -->
+<h2 id="prereq">一、前置准备</h2>
+
+<p>你需要准备以下三样东西：</p>
+
+<table>
+  <tr><th>项目</th><th>说明</th><th>费用</th><th>必要性</th></tr>
+  <tr><td>GitHub 账号</td><td>用于托管代码和运行 Actions</td><td>免费</td><td><span class="badge badge-must">必须</span></td></tr>
+  <tr><td>DeepSeek API Key</td><td>用于 AI 筛选和生成摘要</td><td>约 ¥1/月</td><td><span class="badge badge-must">必须</span></td></tr>
+  <tr><td>手机 ntfy 应用</td><td>用于接收推送通知</td><td>免费</td><td><span class="badge badge-must">必须</span></td></tr>
+</table>
+
+<p>如果你还没有 GitHub 账号，前往 <a href="https://github.com/signup" target="_blank">github.com/signup</a> 免费注册。</p>
+
+<!-- ========== 2. DeepSeek API Key ========== -->
+<h2 id="deepseek">二、获取 DeepSeek API Key</h2>
+
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      <b>打开 DeepSeek 开放平台</b><br>
+      访问 <a href="https://platform.deepseek.com" target="_blank">https://platform.deepseek.com</a>，使用手机号注册并登录。
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>充值余额</b><br>
+      进入「充值」页面，充值 <b>¥10</b> 即可（约够用 10 个月）。支持微信/支付宝支付。
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>创建 API Key</b><br>
+      进入「API Keys」页面 → 点击「创建 API Key」→ 给个名字（如 <code>rss-digest</code>）→ 复制生成的 Key。
+    </div>
+  </li>
+</ol>
+
+<div class="tip">
+  DeepSeek API Key 格式为 <code>sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code>，请妥善保存，后面要用。
+</div>
+
+<!-- ========== 3. ntfy 手机应用 ========== -->
+<h2 id="ntfy">三、手机安装 ntfy 应用</h2>
+
+<h3>安卓用户</h3>
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      <b>安装 ntfy 应用</b><br>
+      在 Google Play 或 F-Droid 搜索 <code>ntfy</code> 安装，或直接下载 APK：<a href="https://github.com/binwiederhier/ntfy/releases" target="_blank">GitHub Releases</a>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>订阅 Topic</b><br>
+      打开 ntfy 应用 → 点击底部 <b>「+」</b> 按钮 → 输入 Topic：<code>rss_digest_8a3f7x</code> → 点击「订阅」
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>允许通知权限</b><br>
+      系统会弹出通知权限请求，选择「允许」，确保推送消息能正常显示。
+    </div>
+  </li>
+</ol>
+
+<h3>iOS 用户</h3>
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      在 App Store 搜索 <code>ntfy</code> 安装，同样订阅 Topic <code>rss_digest_8a3f7x</code>。
+    </div>
+  </li>
+</ol>
+
+<div class="note">
+  Topic 名称 <code>rss_digest_8a3f7x</code> 是你的专属频道，只有知道这个名称的人才能收到推送。不需要注册账号，不需要登录。
+</div>
+
+<!-- ========== 4. 创建 GitHub 仓库 ========== -->
+<h2 id="repo">四、创建 GitHub 仓库并上传文件</h2>
+
+<h3>4.1 需要上传的文件</h3>
+
+<p>从你的 <code>rss_monitor/</code> 目录中，<b>只需要上传以下文件</b>：</p>
+
+<div class="file-tree">
+<span class="keep">.github/workflows/daily-digest.yml</span>   <span class="comment"># GitHub Actions 工作流配置</span>
+<span class="keep">.gitignore</span>                             <span class="comment"># Git 忽略规则</span>
+<span class="keep">README.md</span>                              <span class="comment"># 项目说明文档</span>
+<span class="keep">requirements.txt</span>                       <span class="comment"># Python 依赖清单</span>
+<span class="keep">fetch_rss.py</span>                           <span class="comment"># Step 1: 抓取 RSS 文章</span>
+<span class="keep">ai_filter.py</span>                           <span class="comment"># Step 2: AI 筛选 + 生成摘要</span>
+<span class="keep">push_ntfy.py</span>                           <span class="comment"># Step 3: 推送到 ntfy</span>
+<span class="keep">pushed_links.json</span>                      <span class="comment"># 去重状态文件（内容为 []）</span>
+<span class="ignore">ntfy_topic.txt</span>                         <span class="comment"># ← 不上传！已用环境变量替代</span>
+<span class="ignore">last_run.txt</span>                           <span class="comment"># ← 不上传！首次运行会自动创建</span>
+<span class="ignore">test_*.py / debug_*.py</span>                 <span class="comment"># ← 不上传！测试脚本不需要</span>
+<span class="ignore">__pycache__/</span>                           <span class="comment"># ← 不上传！Python 缓存</span>
+<span class="ignore">rss_articles.json</span>                      <span class="comment"># ← 不上传！运行时生成</span>
+<span class="ignore">digest.md</span>                              <span class="comment"># ← 不上传！运行时生成</span>
+</div>
+
+<div class="danger">
+  上传前，请确保 <code>pushed_links.json</code> 的内容是 <code>[]</code>（空数组），这样 GitHub Actions 首次运行时不会跳过任何文章。如果文件里有之前本地推送过的链接，请清空为 <code>[]</code>。
+</div>
+
+<h3>4.2 创建仓库</h3>
+
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      <b>新建仓库</b><br>
+      登录 GitHub → 点击右上角 <b>「+」</b> → <b>「New repository」</b><br>
+      <br>
+      <b>Repository name:</b> <code>rss-digest</code>（名字随意）<br>
+      <b>Description:</b> <code>Daily RSS digest with AI filtering</code><br>
+      <b>Visibility:</b> 选择 <b>Private</b>（私有仓库，保护你的 API Key）<br>
+      <b>勾选</b> 「Add a README file」<br>
+      <b>不要</b>添加 .gitignore 或 license（我们已有自己的）<br>
+      <br>
+      点击 <b>「Create repository」</b>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>上传文件</b><br>
+      在仓库页面点击 <b>「Add file」</b> → <b>「Upload files」</b><br>
+      <br>
+      但是 GitHub 网页上传<b>不支持文件夹</b>（<code>.github/workflows/</code>），所以推荐用以下方法：
+    </div>
+  </li>
+</ol>
+
+<h3>4.3 推荐上传方式：使用 GitHub Desktop</h3>
+
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      下载安装 <a href="https://desktop.github.com" target="_blank">GitHub Desktop</a>（免费图形化 Git 工具）
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      登录你的 GitHub 账号 → Clone 刚才创建的仓库到本地
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      将 <code>rss_monitor/</code> 目录中<b>需要上传的文件</b>（见上方列表）复制到仓库文件夹中<br>
+      <br>
+      <b>注意创建文件夹结构：</b>先在仓库根目录创建 <code>.github</code> 文件夹 → 在其中创建 <code>workflows</code> 文件夹 → 将 <code>daily-digest.yml</code> 放入
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      回到 GitHub Desktop → 填写 Summary（如 <code>Initial commit</code>）→ 点击 <b>「Commit to main」</b> → 点击 <b>「Push origin」</b>
+    </div>
+  </li>
+</ol>
+
+<h3>4.4 备选上传方式：使用命令行</h3>
+
+<p>如果你熟悉命令行，可以在 <code>rss_monitor/</code> 目录中执行：</p>
+
+<pre><code># 初始化 Git 仓库
+git init
+git remote add origin https://github.com/你的用户名/rss-digest.git
+
+# 创建必要的目录结构
+# (.github/workflows/ 已存在)
+
+# 确认 pushed_links.json 是空的
+echo "[]" > pushed_links.json
+
+# 删除不需要的文件
+rm -f ntfy_topic.txt last_run.txt
+rm -f test_*.py debug_*.py
+rm -f rss_articles.json new_article_links.json digest.md
+rm -rf __pycache__
+
+# 添加并提交
+git add .
+git commit -m "Initial commit: RSS digest system"
+git branch -M main
+git push -u origin main</code></pre>
+
+<h3>4.5 确认仓库结构</h3>
+
+<p>上传完成后，你的 GitHub 仓库应该长这样：</p>
+
+<div class="file-tree">
+rss-digest/
+├── .github/
+│   └── workflows/
+│       └── daily-digest.yml      <span class="comment"># ⬅ 工作流配置</span>
+├── .gitignore
+├── README.md
+├── requirements.txt
+├── fetch_rss.py
+├── ai_filter.py
+├── push_ntfy.py
+└── pushed_links.json             <span class="comment"># 内容为 []</span>
+</div>
+
+<!-- ========== 5. 配置 Secrets ========== -->
+<h2 id="secrets">五、配置 GitHub Secrets</h2>
+
+<p>Secrets 是 GitHub 加密存储的环境变量，你的 API Key 和 ntfy Topic 不会暴露在代码中。</p>
+
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      <b>进入 Secrets 设置页面</b><br>
+      在你的仓库页面 → 点击 <b>「Settings」</b>（顶部标签栏）→ 左侧菜单找到 <b>「Secrets and variables」</b> → 点击 <b>「Actions」</b>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>添加第一个 Secret：DEEPSEEK_API_KEY</b><br>
+      点击 <b>「New repository secret」</b><br>
+      <br>
+      <b>Name:</b> <code>DEEPSEEK_API_KEY</code><br>
+      <b>Secret:</b> 粘贴你的 DeepSeek API Key（<code>sk-xxxx...</code>）<br>
+      <br>
+      点击 <b>「Add secret」</b>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>添加第二个 Secret：NTFY_TOPIC</b><br>
+      再次点击 <b>「New repository secret」</b><br>
+      <br>
+      <b>Name:</b> <code>NTFY_TOPIC</code><br>
+      <b>Secret:</b> <code>rss_digest_8a3f7x</code><br>
+      <br>
+      点击 <b>「Add secret」</b>
+    </div>
+  </li>
+</ol>
+
+<div class="tip">
+  配置完成后，你会看到两个 Secret 名称列表。<b>Secret 的值一旦保存就无法再次查看</b>，只能更新。如果不确定是否正确，可以重新创建覆盖。
+</div>
+
+<!-- ========== 6. 手动测试 ========== -->
+<h2 id="test">六、手动触发测试</h2>
+
+<p>在等待明天 9:00 自动运行之前，我们先手动触发一次测试。</p>
+
+<ol class="steps">
+  <li>
+    <div class="step-content">
+      <b>进入 Actions 页面</b><br>
+      在仓库页面 → 点击顶部 <b>「Actions」</b> 标签
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>如果弹出提示</b><br>
+      首次使用 Actions 时，GitHub 会提示你是否信任此 workflow。点击 <b>「I understand my workflows, go ahead and enable them」</b>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>选择 Workflow</b><br>
+      左侧列表中点击 <b>「RSS Digest Daily」</b>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>手动触发</b><br>
+      点击右侧 <b>「Run workflow」</b> 按钮 → 确认分支是 <code>main</code> → 点击绿色的 <b>「Run workflow」</b>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>等待运行</b><br>
+      几秒钟后，下方会出现一条黄色的运行记录。点击进去可以查看实时日志。<br>
+      <br>
+      整个流程通常需要 <b>2-5 分钟</b>：
+      <ul>
+        <li>抓取 RSS：<b>~30 秒</b></li>
+        <li>AI 筛选 + 生成摘要：<b>1-3 分钟</b>（取决于文章数量）</li>
+        <li>推送到 ntfy：<b>~10 秒</b></li>
+        <li>提交状态文件：<b>~5 秒</b></li>
+      </ul>
+    </div>
+  </li>
+  <li>
+    <div class="step-content">
+      <b>检查运行状态</b><br>
+      运行完成后，状态会变成：
+      <ul>
+        <li>✅ 绿色圆圈 = <b>全部成功</b>，检查手机是否收到推送</li>
+        <li>❌ 红色叉号 = <b>有步骤失败</b>，点击进入查看日志排查</li>
+        <li>🟡 黄色圆圈 = <b>正在运行</b>，请等待</li>
+      </ul>
+    </div>
+  </li>
+</ol>
+
+<!-- ========== 7. 验证推送结果 ========== -->
+<h2 id="verify">七、验证推送结果</h2>
+
+<h3>7.1 检查手机 ntfy</h3>
+
+<p>打开手机上的 ntfy 应用，你应该能看到若干条消息：</p>
+
+<ol>
+  <li>📢 <b>总览消息</b>：显示时间窗口和各分类文章数量</li>
+  <li>🏛 <b>Think Tank</b>：智库分析文章（摘要 + 链接 + 深度拆解）</li>
+  <li>🚀 <b>Tech Analysis</b>：科技深度分析文章</li>
+  <li>💰 <b>Investor Analysis</b>：投资人分析文章</li>
+</ol>
+
+<p>每条消息中，<b>两句话摘要和原文链接</b>直接可见。向下滚动可以看到折叠的 <b>「深度拆解」</b>，点击可展开查看五个维度的详细分析。</p>
+
+<h3>7.2 检查 GitHub 仓库状态文件</h3>
+
+<p>运行成功后，回到 GitHub 仓库主页，你会看到一个新的 commit：</p>
+
+<pre><code>chore: update pushed_links and last_run [skip ci]</code></pre>
+
+<p>这是 workflow 自动提交的，包含更新后的 <code>pushed_links.json</code>（记录已推送的链接，用于去重）和 <code>last_run.txt</code>（记录运行时间，用于追补）。</p>
+
+<h3>7.3 查看运行日志</h3>
+
+<p>如果需要排查问题，在 Actions 页面点击对应的运行记录 → 点击 <code>fetch-filter-push</code> → 展开各个步骤查看日志：</p>
+
+<table>
+  <tr><th>步骤</th><th>日志关键词</th><th>正常输出</th></tr>
+  <tr><td>Fetch RSS feeds</td><td><code>Total: X new articles</code></td><td>15 个源中成功的数量和抓取到的文章数</td></tr>
+  <tr><td>AI filter and generate digest</td><td><code>Stage 1</code> / <code>Stage 2</code></td><td>筛选前 N 篇 → 筛选后 M 篇</td></tr>
+  <tr><td>Push to ntfy</td><td><code>[OK]</code></td><td>每条消息推送成功</td></tr>
+  <tr><td>Commit state files</td><td><code>No state changes</code> 或 commit hash</td><td>状态文件已提交或无需更新</td></tr>
+</table>
+
+<!-- ========== 8. 常见问题 ========== -->
+<h2 id="troubleshoot">八、常见问题排查</h2>
+
+<h3>问题 1：Actions 没有在 9:00 自动运行</h3>
+
+<div class="note">
+  GitHub Actions 的 cron 调度<b>可能有 5-30 分钟延迟</b>，这是正常现象。如果延迟超过 1 小时，检查：
+  <ul>
+    <li>仓库 60 天内是否有活动（GitHub 会自动暂停不活跃仓库的 scheduled workflows）</li>
+    <li>cron 表达式是否正确：<code>0 1 * * *</code>（UTC 1:00 = 北京 9:00）</li>
+  </ul>
+</div>
+
+<h3>问题 2：Fetch RSS feeds 步骤报错</h3>
+
+<p>常见原因和解决方案：</p>
+
+<table>
+  <tr><th>错误信息</th><th>原因</th><th>解决方法</th></tr>
+  <tr><td><code>ModuleNotFoundError: No module named 'feedparser'</code></td><td>依赖未安装</td><td>检查 <code>requirements.txt</code> 是否已上传</td></tr>
+  <tr><td><code>[ERROR] RAND Corporation: 403</code></td><td>RAND 有 bot 检测</td><td>正常现象，代码会跳过该源，不影响其他源</td></tr>
+  <tr><td>某些源 <code>feed parse error</code></td><td>RSS 源临时不可用</td><td>正常现象，代码会跳过并继续抓取其他源</td></tr>
+</table>
+
+<h3>问题 3：AI filter 步骤报错</h3>
+
+<table>
+  <tr><th>错误信息</th><th>原因</th><th>解决方法</th></tr>
+  <tr><td><code>未设置 DEEPSEEK_API_KEY 环境变量</code></td><td>Secret 未配置或名称错误</td><td>检查 Secret 名称是否为 <code>DEEPSEEK_API_KEY</code>（区分大小写）</td></tr>
+  <tr><td><code>401 Authentication Error</code></td><td>API Key 无效或余额不足</td><td>检查 Key 是否正确、账户是否有余额</td></tr>
+  <tr><td><code>429 Rate Limit</code></td><td>API 调用频率超限</td><td>代码已内置重试和 1 秒间隔，如仍超限可稍后重试</td></tr>
+</table>
+
+<h3>问题 4：Push to ntfy 步骤报错</h3>
+
+<table>
+  <tr><th>错误信息</th><th>原因</th><th>解决方法</th></tr>
+  <tr><td><code>未找到 ntfy topic</code></td><td>Secret 未配置</td><td>检查 Secret 名称是否为 <code>NTFY_TOPIC</code></td></tr>
+  <tr><td>手机没收到推送</td><td>Topic 名称不匹配</td><td>确认手机订阅的 Topic 与 Secret 中的值一致</td></tr>
+  <tr><td>消息显示为 txt 附件</td><td>消息超过 4KB</td><td>代码已内置自动拆分，如仍出现请检查日志</td></tr>
+</table>
+
+<h3>问题 5：Commit state files 步骤报错</h3>
+
+<div class="note">
+  此步骤设置了 <code>continue-on-error: true</code>，即使失败也不会中断整体流程。但如果持续失败，状态文件（去重记录）无法持久化，可能导致重复推送。检查：
+  <ul>
+    <li>仓库 Settings → Actions → General → Workflow permissions 是否设置为 <b>「Read and write permissions」</b></li>
+    <li>或者确认 workflow YAML 中 <code>permissions: contents: write</code> 已生效</li>
+  </ul>
+</div>
+
+<h3>问题 6：如何重新推送所有文章（重置去重）</h3>
+
+<p>如果你想重新推送所有文章（比如调试格式），只需：</p>
+
+<ol>
+  <li>在 GitHub 仓库中打开 <code>pushed_links.json</code></li>
+  <li>点击编辑按钮（✏️）</li>
+  <li>将内容改为 <code>[]</code></li>
+  <li>点击「Commit changes」</li>
+  <li>手动触发一次 workflow</li>
+</ol>
+
+<!-- ========== 9. 费用说明 ========== -->
+<h2 id="cost">九、费用说明</h2>
+
+<table>
+  <tr><th>项目</th><th>免费额度</th><th>实际用量</th><th>预计月费</th></tr>
+  <tr><td>GitHub Actions</td><td>2000 分钟/月（私有仓库）</td><td>~5 分钟/天 × 30 天 = 150 分钟</td><td>¥0</td></tr>
+  <tr><td>DeepSeek API</td><td>无免费额度</td><td>~10 篇文章/天 × 30 天 = 300 次 API 调用</td><td>≈ ¥1-2</td></tr>
+  <tr><td>ntfy.sh</td><td>完全免费</td><td>不限</td><td>¥0</td></tr>
+  <tr><td colspan="3" style="text-align: right;"><b>合计</b></td><td><b>≈ ¥1-2/月</b></td></tr>
+</table>
+
+<div class="tip">
+  如果将仓库设为 <b>Public</b>（公开），GitHub Actions 分钟数完全免费且不限量。但建议保持 Private 以保护隐私。
+</div>
+
+<hr>
+<h2>🎉 完成！</h2>
+
+<p>如果以上步骤全部成功，你的 RSS 摘要系统已经在 GitHub Actions 上稳定运行了。每天北京时间 9:00，你的手机会自动收到精选文章摘要推送。</p>
+
+<p><b>你不再需要：</b></p>
+<ul>
+  <li>❌ 每天开机</li>
+  <li>❌ 开启 VPN</li>
+  <li>❌ 运行 WorkBuddy</li>
+  <li>❌ 手动执行任何命令</li>
+</ul>
+
+<p><b>你只需要：</b></p>
+<ul>
+  <li>✅ 手机上打开 ntfy 应用阅读推送</li>
+  <li>✅ DeepSeek 账户保持 ¥5 以上余额（够用 3 个月+）</li>
+</ul>
+
+<p style="margin-top: 30px; color: #6c757d; font-size: 13px; text-align: center;">— 教程结束 —</p>
+
+</body>
+</html>

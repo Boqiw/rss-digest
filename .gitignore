@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Sensitive local config (replaced by GitHub Actions secrets)
+ntfy_topic.txt
+
+# Test/debug scripts (not needed in production)
+test_*.py
+debug_*.py
+
+# Generated runtime files (not state - these are regenerated each run)
+rss_articles.json
+new_article_links.json
+digest.md
+
+# IDE
+.vscode/
+.idea/
