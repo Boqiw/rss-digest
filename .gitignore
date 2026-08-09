@@ -5,6 +5,8 @@ __pycache__/
 # Sensitive local config (replaced by GitHub Actions secrets)
 ntfy_topic.txt
 serverchan_key.txt
+.env
+.env.*
 
 # Test/debug scripts (not needed in production)
 test_*.py
