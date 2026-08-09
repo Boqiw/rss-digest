@@ -4,6 +4,7 @@ __pycache__/
 
 # Sensitive local config (replaced by GitHub Actions secrets)
 ntfy_topic.txt
+serverchan_key.txt
 
 # Test/debug scripts (not needed in production)
 test_*.py
@@ -13,6 +14,10 @@ debug_*.py
 rss_articles.json
 new_article_links.json
 digest.md
+
+部署教程.html
+push_wechat.py
+test_digest.md
 
 # IDE
 .vscode/
