@@ -167,54 +167,66 @@ def format_title(raw_title):
 def parse_article(article_text):
     """解析单篇文章为结构化部分。
 
-    返回 (title, summary, link, dims)
-    - title: 格式化标题（来源 - 标题），无则 None
-    - summary: 摘要文本，无则 None
-    - link: 原文链接 URL，无则 None
-    - dims: [(维度标题, 维度内容), ...] 深度拆解维度列表
+    返回 (en_title, zh_title, summary, link, deep_body)
+    - en_title: 英文原标题（[来源] 标题 格式）
+    - zh_title: 标题翻译（中文）
+    - summary: 一句话总结
+    - link: 原文链接 URL
+    - deep_body: 深度总结正文（多段落，含小标题/加粗）
     """
-    title = None
+    en_title = None
+    zh_title = None
     summary = None
     link = None
-    dims = []
+    deep_body = None
 
-    # 提取 <details> 块（深度拆解部分）
-    details_match = re.search(r'<details>(.*?)</details>', article_text, re.DOTALL)
-    main_text = article_text
-    if details_match:
-        main_text = article_text[:details_match.start()]
-        inner = details_match.group(1)
-        # 去掉 <summary> 标签
-        inner = re.sub(r'<summary>.*?</summary>', '', inner, flags=re.DOTALL)
-        # 按维度标题拆分: **核心论点**：内容
-        parts = re.split(r'(?=\*\*[^*]+\*\*[：:])', inner)
-        for p in parts:
-            p = p.strip()
-            if not p:
-                continue
-            dm = re.match(r'^\*\*([^*]+)\*\*[：:]\s*(.*)', p, re.DOTALL)
-            if dm:
-                dims.append((dm.group(1).strip(), dm.group(2).strip()))
-            else:
-                dims.append(("", p))
+    lines = article_text.split('\n')
+    deep_lines = []
+    in_deep = False
 
-    # 解析标题/摘要/链接
-    for line in main_text.split('\n'):
+    for line in lines:
         stripped = line.strip()
-        tm = re.match(r'^###\s+(?:\d+\.\s*)?(.+)', stripped)
-        if tm and title is None:
-            title = format_title(tm.group(1))
+
+        # 标题行: ### [来源] 英文标题
+        tm = re.match(r'^###\s+(.+)$', stripped)
+        if tm and en_title is None:
+            en_title = tm.group(1).strip()
             continue
-        sm = re.match(r'^(?:\U0001f4dd\s*)?摘要[：:]\s*(.+)', stripped)
+
+        # 标题翻译
+        zm = re.match(r'^标题翻译[：:]\s*(.+)', stripped)
+        if zm and zh_title is None:
+            zh_title = zm.group(1).strip()
+            continue
+
+        # 一句话总结
+        sm = re.match(r'^一句话总结[：:]\s*(.+)', stripped)
         if sm and summary is None:
-            summary = sm.group(1)
+            summary = sm.group(1).strip()
             continue
-        lm = re.match(r'^(?:\U0001f517\s*)?链接[：:]\s*(https?://\S+)', stripped)
+
+        # 原文链接
+        lm = re.match(r'^原文链接[：:]\s*(https?://\S+)', stripped)
         if lm and link is None:
             link = lm.group(1)
             continue
 
-    return title, summary, link, dims
+        # 深度总结开始
+        dm = re.match(r'^深度总结[：:]\s*(.*)', stripped)
+        if dm:
+            in_deep = True
+            if dm.group(1).strip():
+                deep_lines.append(dm.group(1).strip())
+            continue
+
+        # 深度总结正文（后续所有行都属于深度总结，直到下一篇文章）
+        if in_deep:
+            deep_lines.append(line)
+
+    if deep_lines:
+        deep_body = '\n'.join(deep_lines).strip()
+
+    return en_title, zh_title, summary, link, deep_body
 
 
 def build_article_messages(category, article_text, article_index=None, total_in_cat=None):
@@ -222,15 +234,14 @@ def build_article_messages(category, article_text, article_index=None, total_in_
 
     格式统一：
       🚀 科技深度分析
-      **Wired - 文章标题**
-      摘要内容
+      **中文标题翻译**
+      一句话总结
       🔗 [阅读原文](url)
-      **核心论点**：...
-      **技术细节**：...
+      深度总结（连贯段落，含小标题/加粗）
 
-    若超长：头部一条 + 维度按块拆分多条，确保每条 <= MAX_MSG_BYTES。
+    若超长：头部一条 + 深度总结按段落拆分多条，确保每条 <= MAX_MSG_BYTES。
     """
-    title, summary, link, dims = parse_article(article_text)
+    en_title, zh_title, summary, link, deep_body = parse_article(article_text)
 
     emoji = EMOJI_MAP.get(category, "")
     label = f"{emoji} **{category}**" if emoji else f"**{category}**"
@@ -243,89 +254,79 @@ def build_article_messages(category, article_text, article_index=None, total_in_
     else:
         prefix = base_ascii
 
-    # 组装头部（分类 + 标题 + 摘要 + 链接）
+    # 组装头部（分类 + 中文标题 + 一句话总结 + 链接）
     head_parts = [label]
-    if title:
-        head_parts.append(f"**{title}**")
+    if zh_title:
+        head_parts.append(f"**{zh_title}**")
+    elif en_title:
+        head_parts.append(f"**{format_title(en_title)}**")
     if summary:
         head_parts.append(summary)
     if link:
         head_parts.append(f'\U0001f517 [阅读原文]({link})')
     head = "\n\n".join(head_parts)
 
-    # 深度拆解维度块
-    dim_blocks = []
-    for dim_title, dim_content in dims:
-        if dim_title:
-            content = dim_content.strip()
-            # 内容含换行（分点列表）时，标题后换行显示，保持分点清晰
-            if '\n' in content:
-                dim_blocks.append(f"**{dim_title}**：\n{content}")
-            else:
-                dim_blocks.append(f"**{dim_title}**：{content}")
-        else:
-            dim_blocks.append(dim_content)
-
     # 完整 body
     full_body = head
-    if dim_blocks:
-        full_body += "\n\n" + "\n\n".join(dim_blocks)
+    if deep_body:
+        full_body += "\n\n" + deep_body
 
     # 单条能放下：完整推送
     if len(full_body.encode("utf-8")) <= MAX_MSG_BYTES:
         return [(prefix, full_body)]
 
-    # 超长：拆分为多条（头部 + 维度块）
+    # 超长：拆分为多条（头部 + 深度总结按段落拆分）
     messages = []
     if len(head.encode("utf-8")) <= MAX_MSG_BYTES:
         messages.append(head)
     else:
         messages.append(head[:MAX_MSG_BYTES - 50].rstrip() + "...")
 
-    # 维度块按大小累积拆分
-    current = ""
-    current_size = 0
-    for block in dim_blocks:
-        block_size = len(block.encode("utf-8"))
-        sep_size = 2  # "\n\n"
-
-        # 能放进当前块
-        if current and current_size + block_size + sep_size <= MAX_MSG_BYTES:
-            current += "\n\n" + block
-            current_size += block_size + sep_size
-            continue
-
-        # 当前块已满，先关闭
-        if current:
-            messages.append(current)
-            current = ""
-            current_size = 0
-
-        # 块本身能单独放下
-        if block_size <= MAX_MSG_BYTES:
-            current = block
-            current_size = block_size
-            continue
-
-        # 块本身超长：按行拆分
-        lines = block.split('\n')
+    # 深度总结按段落累积拆分
+    if deep_body:
+        # 按空行分段（保留小标题/加粗行）
+        paragraphs = re.split(r'\n\s*\n', deep_body)
         current = ""
         current_size = 0
-        for line in lines:
-            line_size = len(("\n" + line).encode("utf-8")) if current else len(line.encode("utf-8"))
-            if current and current_size + line_size > MAX_MSG_BYTES:
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            para_size = len(para.encode("utf-8"))
+            sep_size = 2  # "\n\n"
+
+            if current and current_size + para_size + sep_size <= MAX_MSG_BYTES:
+                current += "\n\n" + para
+                current_size += para_size + sep_size
+                continue
+
+            if current:
                 messages.append(current)
                 current = ""
                 current_size = 0
-            current += ("\n" if current else "") + line
-            current_size = len(current.encode("utf-8"))
+
+            if para_size <= MAX_MSG_BYTES:
+                current = para
+                current_size = para_size
+            else:
+                # 单段超长：按行拆分
+                current = ""
+                current_size = 0
+                for line in para.split('\n'):
+                    line_size = len(line.encode("utf-8"))
+                    if current and current_size + line_size + 1 > MAX_MSG_BYTES:
+                        messages.append(current)
+                        current = ""
+                        current_size = 0
+                    current += ("\n" if current else "") + line
+                    current_size = len(current.encode("utf-8"))
+                if current:
+                    messages.append(current)
+                    current = ""
+                    current_size = 0
+
         if current:
             messages.append(current)
-            current = ""
-            current_size = 0
-
-    if current:
-        messages.append(current)
 
     # 加上序号
     result = []
