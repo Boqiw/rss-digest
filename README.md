@@ -29,7 +29,12 @@ fetch_rss.py → rss_articles.json → ai_filter.py → digest.md → push_ntfy.
 | Secret 名 | 值 | 说明 |
 |-----------|-----|------|
 | `DEEPSEEK_API_KEY` | 你的 DeepSeek API Key | 从 https://platform.deepseek.com 获取 |
-| `NTFY_TOPIC` | `rss_digest_8a3f7x` | ntfy.sh 订阅 topic |
+| `NTFY_TOPIC` | 你的私有 ntfy topic | 见下方「私有 topic 说明」 |
+
+> 🔒 **私有 topic 说明**：ntfy.sh 的机制是「知道 topic 名称即可订阅接收消息」。
+> 为防止陌生人订阅你的推送，请使用**随机不可猜测**的 topic（如 `rss_digest_` + 24 位随机字符），
+> 且**不要**将其写入本 README 或任何公开仓库文件。
+> 生成方式（终端运行）：`python -c "import secrets; print('rss_digest_' + secrets.token_hex(12))"`
 
 ### 3. 确认文件结构
 
@@ -51,17 +56,17 @@ rss_monitor/
 
 ### 5. 手机订阅
 
-在手机上安装 ntfy 应用，订阅 topic `rss_digest_8a3f7x`。
+在手机上安装 ntfy 应用，订阅你在 `NTFY_TOPIC` secret 中设置的**私有随机 topic**（仅你自己知道）。
 
 ## 本地运行
 
 ```bash
 # 设置环境变量
 export DEEPSEEK_API_KEY="your-api-key"
-export NTFY_TOPIC="rss_digest_8a3f7x"
+export NTFY_TOPIC="你的私有随机topic"   # 不要使用公开/易猜的 topic
 
-# 或创建 ntfy_topic.txt 文件
-echo "rss_digest_8a3f7x" > ntfy_topic.txt
+# 或创建 ntfy_topic.txt 文件（已被 .gitignore 排除，不会上传）
+echo "你的私有随机topic" > ntfy_topic.txt
 
 # 运行
 pip install -r requirements.txt
@@ -85,5 +90,5 @@ AI 筛选保留以下主题的文章：
 
 - 总览消息：时间窗口 + 各分类文章数
 - 分类消息：两句话摘要 + 原文链接（明面可见）
-- 深度拆解：折叠在 `<details>` 中（核心论点/技术细节/影响分析/关键数据/启示）
+- 深度拆解：直接展开（核心论点/技术细节/影响分析/关键数据/启示），分点清晰
 - 超长文章自动拆分为多条消息（ntfy 4KB 限制）
