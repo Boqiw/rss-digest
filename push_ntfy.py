@@ -165,24 +165,28 @@ def format_title(raw_title):
 
 
 def parse_article(article_text):
-    """解析单篇文章为结构化部分。
+    """解析单篇文章为两部分结构。
 
-    返回 (en_title, zh_title, summary, link, deep_body)
+    返回 (en_title, zh_title, summary, link, deep_body, insight)
     - en_title: 英文原标题（[来源] 标题 格式）
     - zh_title: 标题翻译（中文）
     - summary: 一句话总结
     - link: 原文链接 URL
-    - deep_body: 深度总结正文（多段落，含小标题/加粗）
+    - deep_body: 深度总结正文（第一部分，多段落，含小标题/加粗）
+    - insight: 我的理解（第二部分，个人理解/影响/批判思考）
     """
     en_title = None
     zh_title = None
     summary = None
     link = None
     deep_body = None
+    insight = None
 
     lines = article_text.split('\n')
-    deep_lines = []
-    in_deep = False
+    part1_lines = []
+    part2_lines = []
+    in_deep = False      # 正在收集深度总结
+    in_insight = False   # 正在收集我的理解
 
     for line in lines:
         stripped = line.strip()
@@ -211,131 +215,100 @@ def parse_article(article_text):
             link = lm.group(1)
             continue
 
-        # 深度总结开始
+        # 【我的理解】分隔标记：第一部分结束，第二部分开始
+        im = re.match(r'^【我的理解】', stripped)
+        if im:
+            in_deep = False
+            in_insight = True
+            continue
+
+        # 深度总结开始（第一部分）
         dm = re.match(r'^深度总结[：:]\s*(.*)', stripped)
         if dm:
             in_deep = True
+            in_insight = False
             if dm.group(1).strip():
-                deep_lines.append(dm.group(1).strip())
+                part1_lines.append(dm.group(1).strip())
             continue
 
-        # 深度总结正文（后续所有行都属于深度总结，直到下一篇文章）
-        if in_deep:
-            deep_lines.append(line)
+        # 正文收集
+        if in_insight:
+            part2_lines.append(line)
+        elif in_deep:
+            part1_lines.append(line)
 
-    if deep_lines:
-        deep_body = '\n'.join(deep_lines).strip()
+    if part1_lines:
+        deep_body = '\n'.join(part1_lines).strip()
+    if part2_lines:
+        insight = '\n'.join(part2_lines).strip()
 
-    return en_title, zh_title, summary, link, deep_body
+    return en_title, zh_title, summary, link, deep_body, insight
+
+
+def _truncate_to_limit(text, limit=MAX_MSG_BYTES):
+    """将文本截断到指定字节数以内（按 UTF-8 字节安全截断）"""
+    if len(text.encode("utf-8")) <= limit:
+        return text
+    # 逐个字符累积到 limit
+    result = ""
+    size = 0
+    for ch in text:
+        ch_size = len(ch.encode("utf-8"))
+        if size + ch_size > limit:
+            break
+        result += ch
+        size += ch_size
+    return result.rstrip() + "..."
 
 
 def build_article_messages(category, article_text, article_index=None, total_in_cat=None):
     """将单篇文章构造成推送消息列表 [(标题, body), ...]。
 
-    格式统一：
-      🚀 科技深度分析
-      **中文标题翻译**
-      一句话总结
-      🔗 [阅读原文](url)
-      深度总结（连贯段落，含小标题/加粗）
+    每篇文章固定两条消息：
+      [第一条] 🚀 科技深度分析 + **中文标题** + 一句话总结 + 🔗 阅读原文 + 深度总结
+      [第二条] 🚀 科技深度分析 + **我的理解** + 个人理解正文
 
-    若超长：头部一条 + 深度总结按段落拆分多条，确保每条 <= MAX_MSG_BYTES。
+    标题命名：xxxx 序号/总数-I 和 xxxx 序号/总数-II
+    例如第 3 篇（共 10 篇）: Tech Analysis 3/10-I / Tech Analysis 3/10-II
+
+    强制保证：返回恰好 2 条消息（正文过长时截断，绝不拆分出第 3 条）。
     """
-    en_title, zh_title, summary, link, deep_body = parse_article(article_text)
+    en_title, zh_title, summary, link, deep_body, insight = parse_article(article_text)
 
     emoji = EMOJI_MAP.get(category, "")
     label = f"{emoji} **{category}**" if emoji else f"**{category}**"
 
     base_ascii = TITLE_MAP.get(category, category.encode("ascii", "replace").decode())
-    if article_index is not None:
-        prefix = f"{base_ascii} {article_index}"
-        if total_in_cat and total_in_cat > 1:
-            prefix = f"{base_ascii} {article_index}/{total_in_cat}"
+    if article_index is not None and total_in_cat:
+        prefix = f"{base_ascii} {article_index}/{total_in_cat}"
     else:
         prefix = base_ascii
 
-    # 组装头部（分类 + 中文标题 + 一句话总结 + 链接）
-    head_parts = [label]
+    # === 第一条：标题 + 一句话总结 + 链接 + 深度总结 ===
+    msg1_parts = [label]
     if zh_title:
-        head_parts.append(f"**{zh_title}**")
+        msg1_parts.append(f"**{zh_title}**")
     elif en_title:
-        head_parts.append(f"**{format_title(en_title)}**")
+        msg1_parts.append(f"**{format_title(en_title)}**")
     if summary:
-        head_parts.append(summary)
+        msg1_parts.append(summary)
     if link:
-        head_parts.append(f'\U0001f517 [阅读原文]({link})')
-    head = "\n\n".join(head_parts)
-
-    # 完整 body
-    full_body = head
+        msg1_parts.append(f'\U0001f517 [阅读原文]({link})')
     if deep_body:
-        full_body += "\n\n" + deep_body
+        msg1_parts.append(deep_body)
+    msg1_body = "\n\n".join(msg1_parts)
+    msg1_body = _truncate_to_limit(msg1_body)
 
-    # 单条能放下：完整推送
-    if len(full_body.encode("utf-8")) <= MAX_MSG_BYTES:
-        return [(prefix, full_body)]
-
-    # 超长：拆分为多条（头部 + 深度总结按段落拆分）
-    messages = []
-    if len(head.encode("utf-8")) <= MAX_MSG_BYTES:
-        messages.append(head)
+    # === 第二条：我的理解 ===
+    msg2_parts = [label, f"**我的理解**"]
+    if insight:
+        msg2_parts.append(insight)
     else:
-        messages.append(head[:MAX_MSG_BYTES - 50].rstrip() + "...")
+        msg2_parts.append("（该文章未生成个人理解部分）")
+    msg2_body = "\n\n".join(msg2_parts)
+    msg2_body = _truncate_to_limit(msg2_body)
 
-    # 深度总结按段落累积拆分
-    if deep_body:
-        # 按空行分段（保留小标题/加粗行）
-        paragraphs = re.split(r'\n\s*\n', deep_body)
-        current = ""
-        current_size = 0
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
-            para_size = len(para.encode("utf-8"))
-            sep_size = 2  # "\n\n"
-
-            if current and current_size + para_size + sep_size <= MAX_MSG_BYTES:
-                current += "\n\n" + para
-                current_size += para_size + sep_size
-                continue
-
-            if current:
-                messages.append(current)
-                current = ""
-                current_size = 0
-
-            if para_size <= MAX_MSG_BYTES:
-                current = para
-                current_size = para_size
-            else:
-                # 单段超长：按行拆分
-                current = ""
-                current_size = 0
-                for line in para.split('\n'):
-                    line_size = len(line.encode("utf-8"))
-                    if current and current_size + line_size + 1 > MAX_MSG_BYTES:
-                        messages.append(current)
-                        current = ""
-                        current_size = 0
-                    current += ("\n" if current else "") + line
-                    current_size = len(current.encode("utf-8"))
-                if current:
-                    messages.append(current)
-                    current = ""
-                    current_size = 0
-
-        if current:
-            messages.append(current)
-
-    # 加上序号
-    result = []
-    total_msgs = len(messages)
-    for i, msg in enumerate(messages, 1):
-        suffix = f" ({i}/{total_msgs})" if total_msgs > 1 else ""
-        result.append((f"{prefix}{suffix}", msg))
-
-    return result
+    return [(f"{prefix}-I", msg1_body), (f"{prefix}-II", msg2_body)]
 
 
 def parse_articles_by_category(content):
