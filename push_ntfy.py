@@ -2,14 +2,21 @@
 """
 ntfy.sh Push Script - 通过 ntfy 推送摘要到安卓手机
 每篇文章独立推送一条消息，格式统一：
-  分类标签 + 文章标题 + 摘要 + 原文链接 + 折叠的深度拆解
-单篇文章超长时自动拆分（摘要+链接一条，深度拆解按维度多条），
+  🚀 科技深度分析          <- 分类行（emoji + 分类名）
+  **Wired - 文章标题**     <- 标题（来源 - 标题）
+  摘要内容                 <- 两句话摘要
+  🔗 [阅读原文](url)      <- 链接
+  **核心论点**：...        <- 深度拆解直接展开（不折叠）
+  **技术细节**：...
+
+深度拆解不再折叠在 <details> 中，直接展开显示，阅读体验更流畅。
+单篇文章超长时自动拆分（头部一条 + 维度按块多条），
 确保每条消息不超过 ntfy 4KB 内联限制，不会变成 txt 附件。
 
 特性：
 - 一篇文章 = 一条推送（格式统一，无多篇混排）
 - 总览消息顶部显示时间范围和新文章数
-- 深度拆解折叠在 <details> 标签中，需要时展开
+- 深度拆解直接展开，分点清晰
 - 推送成功后自动标记已推链接，下次不会重复推送
 
 用法:
@@ -149,59 +156,185 @@ def mark_links_as_pushed():
     print(f"[DEDUP] Marked {len(new_links)} links as pushed (total: {len(merged_list)})")
 
 
-def format_as_markdown(text):
-    """将单篇文章文本转换为美观的 Markdown 格式，保留 <details> 深度拆解块"""
-    # 先提取 <details>...</details> 块，用占位符替换
-    details_blocks = []
+def format_title(raw_title):
+    """将 '[Wired] Title' 转为 'Wired - Title'"""
+    m = re.match(r'^\[(.+?)\]\s*(.+)', raw_title)
+    if m:
+        return f"{m.group(1)} - {m.group(2)}"
+    return raw_title
 
-    def save_details(m):
-        details_blocks.append(m.group(0))
-        return f"__DETAILS_PLACEHOLDER_{len(details_blocks) - 1}__"
 
-    text = re.sub(r'<details>.*?</details>', save_details, text, flags=re.DOTALL)
+def parse_article(article_text):
+    """解析单篇文章为结构化部分。
 
-    lines = text.split('\n')
-    output_lines = []
+    返回 (title, summary, link, dims)
+    - title: 格式化标题（来源 - 标题），无则 None
+    - summary: 摘要文本，无则 None
+    - link: 原文链接 URL，无则 None
+    - dims: [(维度标题, 维度内容), ...] 深度拆解维度列表
+    """
+    title = None
+    summary = None
+    link = None
+    dims = []
 
-    for line in lines:
+    # 提取 <details> 块（深度拆解部分）
+    details_match = re.search(r'<details>(.*?)</details>', article_text, re.DOTALL)
+    main_text = article_text
+    if details_match:
+        main_text = article_text[:details_match.start()]
+        inner = details_match.group(1)
+        # 去掉 <summary> 标签
+        inner = re.sub(r'<summary>.*?</summary>', '', inner, flags=re.DOTALL)
+        # 按维度标题拆分: **核心论点**：内容
+        parts = re.split(r'(?=\*\*[^*]+\*\*[：:])', inner)
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            dm = re.match(r'^\*\*([^*]+)\*\*[：:]\s*(.*)', p, re.DOTALL)
+            if dm:
+                dims.append((dm.group(1).strip(), dm.group(2).strip()))
+            else:
+                dims.append(("", p))
+
+    # 解析标题/摘要/链接
+    for line in main_text.split('\n'):
         stripped = line.strip()
-
-        # 匹配文章标题行: ### 1. [来源] 标题 或 ### [来源] 标题
-        title_match = re.match(r'^###\s+(?:\d+\.\s*)?(.+)', stripped)
-        if title_match:
-            # 加粗标题
-            output_lines.append(f'**{title_match.group(1)}**')
-            output_lines.append('')
+        tm = re.match(r'^###\s+(?:\d+\.\s*)?(.+)', stripped)
+        if tm and title is None:
+            title = format_title(tm.group(1))
+            continue
+        sm = re.match(r'^(?:\U0001f4dd\s*)?摘要[：:]\s*(.+)', stripped)
+        if sm and summary is None:
+            summary = sm.group(1)
+            continue
+        lm = re.match(r'^(?:\U0001f517\s*)?链接[：:]\s*(https?://\S+)', stripped)
+        if lm and link is None:
+            link = lm.group(1)
             continue
 
-        # 匹配摘要行: 摘要：xxx  或  📝 摘要：xxx
-        summary_match = re.match(r'^(?:\U0001f4dd\s*)?摘要[：:]\s*(.+)', stripped)
-        if summary_match:
-            output_lines.append(summary_match.group(1))
-            output_lines.append('')
+    return title, summary, link, dims
+
+
+def build_article_messages(category, article_text, article_index=None, total_in_cat=None):
+    """将单篇文章构造成推送消息列表 [(标题, body), ...]。
+
+    格式统一：
+      🚀 科技深度分析
+      **Wired - 文章标题**
+      摘要内容
+      🔗 [阅读原文](url)
+      **核心论点**：...
+      **技术细节**：...
+
+    若超长：头部一条 + 维度按块拆分多条，确保每条 <= MAX_MSG_BYTES。
+    """
+    title, summary, link, dims = parse_article(article_text)
+
+    emoji = EMOJI_MAP.get(category, "")
+    label = f"{emoji} **{category}**" if emoji else f"**{category}**"
+
+    base_ascii = TITLE_MAP.get(category, category.encode("ascii", "replace").decode())
+    if article_index is not None:
+        prefix = f"{base_ascii} {article_index}"
+        if total_in_cat and total_in_cat > 1:
+            prefix = f"{base_ascii} {article_index}/{total_in_cat}"
+    else:
+        prefix = base_ascii
+
+    # 组装头部（分类 + 标题 + 摘要 + 链接）
+    head_parts = [label]
+    if title:
+        head_parts.append(f"**{title}**")
+    if summary:
+        head_parts.append(summary)
+    if link:
+        head_parts.append(f'\U0001f517 [阅读原文]({link})')
+    head = "\n\n".join(head_parts)
+
+    # 深度拆解维度块
+    dim_blocks = []
+    for dim_title, dim_content in dims:
+        if dim_title:
+            content = dim_content.strip()
+            # 内容含换行（分点列表）时，标题后换行显示，保持分点清晰
+            if '\n' in content:
+                dim_blocks.append(f"**{dim_title}**：\n{content}")
+            else:
+                dim_blocks.append(f"**{dim_title}**：{content}")
+        else:
+            dim_blocks.append(dim_content)
+
+    # 完整 body
+    full_body = head
+    if dim_blocks:
+        full_body += "\n\n" + "\n\n".join(dim_blocks)
+
+    # 单条能放下：完整推送
+    if len(full_body.encode("utf-8")) <= MAX_MSG_BYTES:
+        return [(prefix, full_body)]
+
+    # 超长：拆分为多条（头部 + 维度块）
+    messages = []
+    if len(head.encode("utf-8")) <= MAX_MSG_BYTES:
+        messages.append(head)
+    else:
+        messages.append(head[:MAX_MSG_BYTES - 50].rstrip() + "...")
+
+    # 维度块按大小累积拆分
+    current = ""
+    current_size = 0
+    for block in dim_blocks:
+        block_size = len(block.encode("utf-8"))
+        sep_size = 2  # "\n\n"
+
+        # 能放进当前块
+        if current and current_size + block_size + sep_size <= MAX_MSG_BYTES:
+            current += "\n\n" + block
+            current_size += block_size + sep_size
             continue
 
-        # 匹配链接行: 链接：xxx  或  🔗 xxx
-        link_match = re.match(r'^(?:\U0001f517\s*)?链接[：:]\s*(https?://\S+)', stripped)
-        if link_match:
-            url = link_match.group(1)
-            output_lines.append(f'\U0001f517 [阅读原文]({url})')
-            output_lines.append('')
+        # 当前块已满，先关闭
+        if current:
+            messages.append(current)
+            current = ""
+            current_size = 0
+
+        # 块本身能单独放下
+        if block_size <= MAX_MSG_BYTES:
+            current = block
+            current_size = block_size
             continue
 
-        # 匹配占位符（深度拆解块）
-        placeholder_match = re.match(r'^__DETAILS_PLACEHOLDER_(\d+)__$', stripped)
-        if placeholder_match:
-            idx = int(placeholder_match.group(1))
-            output_lines.append(details_blocks[idx])
-            output_lines.append('')
-            continue
+        # 块本身超长：按行拆分
+        lines = block.split('\n')
+        current = ""
+        current_size = 0
+        for line in lines:
+            line_size = len(("\n" + line).encode("utf-8")) if current else len(line.encode("utf-8"))
+            if current and current_size + line_size > MAX_MSG_BYTES:
+                messages.append(current)
+                current = ""
+                current_size = 0
+            current += ("\n" if current else "") + line
+            current_size = len(current.encode("utf-8"))
+        if current:
+            messages.append(current)
+            current = ""
+            current_size = 0
 
-        # 其他非空行直接保留
-        if stripped:
-            output_lines.append(stripped)
+    if current:
+        messages.append(current)
 
-    return '\n'.join(output_lines).strip()
+    # 加上序号
+    result = []
+    total_msgs = len(messages)
+    for i, msg in enumerate(messages, 1):
+        suffix = f" ({i}/{total_msgs})" if total_msgs > 1 else ""
+        result.append((f"{prefix}{suffix}", msg))
+
+    return result
 
 
 def parse_articles_by_category(content):
@@ -274,155 +407,6 @@ def push_to_ntfy(topic, title_ascii, message, tags="", priority="default"):
     except Exception as e:
         print(f"  [ERROR] {title_ascii}: {e}")
         return False
-
-
-def split_single_article(article_body):
-    """拆分单篇超长文章：将摘要+链接与深度拆解分离，分别作为独立消息。
-    如果深度拆解本身仍超长，按维度（** 标题）进一步拆分。
-    返回 list[str]，每个元素是一条消息的 body。
-    """
-    # 提取 <details>...</details> 块
-    details_match = re.search(r'<details>.*?</details>', article_body, re.DOTALL)
-    if not details_match:
-        # 没有 details 块，无法进一步拆分
-        return [article_body]
-
-    details_block = details_match.group(0)
-    main_part = article_body[:details_match.start()].strip()
-
-    parts = []
-
-    # Part 1: 摘要 + 链接（加提示深度拆解在后续消息）
-    main_with_note = main_part + "\n\n\U0001f4d6 深度拆解见后续消息"
-    if len(main_with_note.encode("utf-8")) <= MAX_MSG_BYTES:
-        parts.append(main_with_note)
-    else:
-        # main_part 本身超长（极不可能），截断
-        parts.append(main_part[:MAX_MSG_BYTES - 50].rstrip() + "...")
-
-    # Part 2+: 深度拆解
-    details_bytes = len(details_block.encode("utf-8"))
-    if details_bytes <= MAX_MSG_BYTES:
-        parts.append(details_block)
-    else:
-        # 提取 <summary> 标签
-        summary_match = re.search(r'<summary>(.*?)</summary>', details_block)
-        summary_tag = summary_match.group(0) if summary_match else "<summary>深度拆解</summary>"
-
-        # 提取 details 内的内容（去掉 <details>, <summary>...</summary>, </details>）
-        if summary_match:
-            inner_start = summary_match.end()
-        else:
-            inner_start = details_match.start() + len("<details>")
-        inner_end = details_match.end() - len("</details>")
-        inner_content = article_body[inner_start:inner_end].strip()
-
-        # 按 ** 维度标题拆分
-        dim_sections = re.split(r'(?=\*\*[^*]+\*\*[：:])', inner_content)
-
-        close_tag = "\n\n</details>"
-        close_size = len(close_tag.encode("utf-8"))
-
-        current = f"<details>\n{summary_tag}\n\n"
-        current_size = len(current.encode("utf-8"))
-        empty_chunk_size = current_size  # 空块的基准大小
-
-        for sec in dim_sections:
-            sec = sec.strip()
-            if not sec:
-                continue
-            sec_size = len(sec.encode("utf-8"))
-
-            # Case 1: 维度能放进当前块
-            if current_size + sec_size + close_size <= MAX_MSG_BYTES:
-                current += sec + "\n\n"
-                current_size += sec_size + 2
-                continue
-
-            # Case 2: 当前块有内容，先关闭它
-            if current_size > empty_chunk_size:
-                current += close_tag
-                parts.append(current)
-                current = "<details>\n<summary>深度拆解 (续)</summary>\n\n"
-                current_size = len(current.encode("utf-8"))
-                empty_chunk_size = current_size
-
-            # Case 3: 维度单独能放进一个新块
-            if current_size + sec_size + close_size <= MAX_MSG_BYTES:
-                current += sec + "\n\n"
-                current_size += sec_size + 2
-                continue
-
-            # Case 4: 维度本身超长，按行（bullet point）拆分
-            sec_lines = sec.split('\n')
-            dim_header_line = sec_lines[0] if sec_lines else ""
-            dim_header_bytes = len((dim_header_line + "\n").encode("utf-8"))
-
-            current += dim_header_line + "\n"
-            current_size += dim_header_bytes
-
-            for line in sec_lines[1:]:
-                line = line.strip()
-                if not line:
-                    continue
-                line_bytes = len((line + "\n").encode("utf-8"))
-
-                if current_size + line_bytes + close_size > MAX_MSG_BYTES:
-                    # 关闭当前块，开启新块，重复维度标题
-                    current += close_tag
-                    parts.append(current)
-                    current = "<details>\n<summary>深度拆解 (续)</summary>\n\n"
-                    current_size = len(current.encode("utf-8"))
-                    empty_chunk_size = current_size
-                    cont_header = dim_header_line + " (续)\n"
-                    current += cont_header
-                    current_size += len(cont_header.encode("utf-8"))
-
-                current += line + "\n"
-                current_size += line_bytes
-
-            current += "\n"
-            current_size += 1
-
-        if current_size > empty_chunk_size and not current.rstrip().endswith("</details>"):
-            current += close_tag
-            parts.append(current)
-
-    return parts
-
-
-def build_article_messages(category, article_text, article_index=None, total_in_cat=None):
-    """将单篇文章构造成推送消息列表 [(标题, body), ...]。
-
-    格式统一：分类标签 + 文章标题 + 摘要 + 链接 + 深度拆解
-    - 若总大小 <= MAX_MSG_BYTES：一条消息推送完整内容
-    - 若超长：摘要+链接一条，深度拆解按维度多条
-    article_index/total_in_cat: 文章在当前分类中的序号，用于标题区分（如 Think Tank 1/4）
-    """
-    formatted = format_as_markdown(article_text)
-    emoji = EMOJI_MAP.get(category, "")
-    label = f"{emoji} **{category}**" if emoji else f"**{category}**"
-    full_body = f"{label}\n\n{formatted}"
-
-    base_ascii = TITLE_MAP.get(category, category.encode("ascii", "replace").decode())
-    if article_index is not None:
-        prefix = f"{base_ascii} {article_index}"
-        if total_in_cat and total_in_cat > 1:
-            prefix = f"{base_ascii} {article_index}/{total_in_cat}"
-    else:
-        prefix = base_ascii
-
-    # 单条能放下：完整推送
-    if len(full_body.encode("utf-8")) <= MAX_MSG_BYTES:
-        return [(prefix, full_body)]
-
-    # 超长：拆分为多条
-    parts = split_single_article(full_body)
-    messages = []
-    for i, part in enumerate(parts, 1):
-        suffix = f" ({i}/{len(parts)})" if len(parts) > 1 else ""
-        messages.append((f"{prefix}{suffix}", part))
-    return messages
 
 
 def main():
